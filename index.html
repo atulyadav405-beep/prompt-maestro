@@ -127,6 +127,14 @@
       <span class="linklike" id="clearLearn" style="margin-top:8px;display:inline-block">Clear all learnings</span>
     </details>
 
+    <details id="kbBlockUI">
+      <summary>📚 Knowledge base <span class="hint">— live clinical data from GitHub</span></summary>
+      <label>Raw GitHub URL of your clinical doc <span class="info" data-info="kb">i</span></label>
+      <input type="text" id="kbUrl" placeholder="https://raw.githubusercontent.com/you/repo/main/clinical.md" />
+      <button class="btn ghost sm" id="kbFetch" style="margin-top:10px">Fetch / refresh</button>
+      <div class="memrow" id="kbState"></div>
+    </details>
+
     <details>
       <summary>⚙︎ API settings (needed once — your key, your model)</summary>
       <label>Provider <span class="info" data-info="provider">i</span></label>
@@ -195,7 +203,8 @@ const INFO={
   voice:{t:"Anchor everything to how you actually sound",b:"Paste a couple of lines you've really written. The tool bakes this in as a voice anchor so prompts produce copy in your tone — not generic AI voice. Saved only on this device."},
   learn:{t:"It gets better the more you use it",b:"Every time you refine a prompt and keep 'remember this' ticked, the takeaway is stored here and applied to all future prompts on this device. Delete any you don't want anymore."},
   refine:{t:"Close the loop",b:"Ran the prompt and the output missed? Say what was off or add detail. It revises the prompt — and, if you let it, remembers the lesson for next time."},
-  provider:{t:"Which AI does the thinking",b:"This tool calls a model to ask smart questions and write your prompt. Gemini is the most reliable from a plain website. Your key never leaves your browser except to that provider."}
+  provider:{t:"Which AI does the thinking",b:"This tool calls a model to ask smart questions and write your prompt. Gemini is the most reliable from a plain website. Your key never leaves your browser except to that provider."},
+  kb:{t:"Ground prompts in your real clinical data",b:"Paste the RAW GitHub URL of your clinical research document (raw.githubusercontent.com/…/file.md). The tool fetches the latest version live, pulls the relevant sections into each prompt, and forbids the AI from inventing any stat or claim not found there. Edit the doc on GitHub and the tool reflects it within ~5 minutes."}
 };
 const ov=document.getElementById("ov");
 function bindInfo(){
@@ -286,6 +295,80 @@ document.getElementById("saveVoice").addEventListener("click",()=>{
   const b=document.getElementById("saveVoice");b.textContent="Saved ✓";setTimeout(()=>b.textContent="Save voice",1300);
 });
 document.getElementById("clearLearn").addEventListener("click",()=>{setLearnings([]);renderLearnings();});
+
+/* ---------- knowledge base: live fetch from raw GitHub ---------- */
+const KBURL_KEY="pm_kb_url",KBTXT_KEY="pm_kb_text",KBTS_KEY="pm_kb_ts",KB_TTL=300000; // 5-min cache
+const DEFAULT_KB="https://raw.githubusercontent.com/atulyadav405-beep/hydration-reference/main/index.html"; // Osmo clinical hydration reference
+let kbText="";
+function kbUrlVal(){return (document.getElementById("kbUrl").value||"").trim();}
+function renderKBState(){
+  const el=document.getElementById("kbState"), url=kbUrlVal();
+  if(!url){el.innerHTML='<span class="hint">No knowledge base connected — prompts use only what you type.</span>';return;}
+  if(kbText){
+    let ts=0;try{ts=+localStorage.getItem(KBTS_KEY)||0;}catch(e){}
+    el.innerHTML='<span class="chip">connected ✓ '+Math.round(kbText.length/1000)+'k chars</span>'+(ts?'<span class="hint">fetched '+new Date(ts).toLocaleString()+'</span>':'');
+  } else el.innerHTML='<span class="hint">URL saved — click Fetch to load it.</span>';
+}
+async function fetchKB(force){
+  const url=kbUrlVal();
+  if(!url){kbText="";return;}
+  try{localStorage.setItem(KBURL_KEY,url);}catch(e){}
+  let ts=0;try{ts=+localStorage.getItem(KBTS_KEY)||0;}catch(e){}
+  if(!force && kbText && (Date.now()-ts)<KB_TTL) return; // serve cache
+  const el=document.getElementById("kbState"); el.textContent="Fetching knowledge base…";
+  try{
+    const r=await fetch(url,{cache:"no-store"});
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    kbText=await r.text();
+    try{localStorage.setItem(KBTXT_KEY,kbText);localStorage.setItem(KBTS_KEY,String(Date.now()));}catch(e){}
+    renderKBState();
+  }catch(e){
+    el.innerHTML='<span class="err">Couldn\'t fetch ('+e.message+'). Use a RAW file URL (raw.githubusercontent.com/…).</span>';
+  }
+}
+// if the KB is an HTML page (data embedded in markup), strip styling/markup and keep the readable text + data
+function cleanKB(text){
+  if(!/<(html|head|body|script|style|div|section|!doctype)/i.test(text)) return text; // already plain text/markdown
+  return text
+    .replace(/<style[\s\S]*?<\/style>/gi," ")   // drop CSS (usually the biggest noise)
+    .replace(/<svg[\s\S]*?<\/svg>/gi," ")
+    .replace(/<link[^>]*>/gi," ")
+    .replace(/<[^>]+>/g," ")                      // drop remaining tags (keeps the JS/data text between them)
+    .replace(/&[a-z]+;/gi," ")
+    .replace(/[ \t]+/g," ")
+    .replace(/\n{3,}/g,"\n\n")
+    .trim();
+}
+// pick the parts of the doc most relevant to the current brief, so prompts stay tight
+function selectSections(text,brief,maxChars){
+  maxChars=maxChars||10000;
+  text=cleanKB(text);
+  if(text.length<=maxChars) return text;
+  let parts=text.split(/\n(?=#{1,6}\s)/);          // prefer markdown headings
+  if(parts.length<3){                               // no headings (e.g. cleaned HTML) → fixed-size windows
+    parts=[]; for(let i=0;i<text.length;i+=1200) parts.push(text.slice(i,i+1200));
+  }
+  const wset=new Set((brief.toLowerCase().match(/[a-z0-9]{4,}/g)||[]));
+  const scored=parts.map(p=>{const pl=p.toLowerCase();let s=0;wset.forEach(w=>{if(pl.includes(w))s++;});return {p,s};});
+  scored.sort((a,b)=>b.s-a.s);
+  let out="",used=0;
+  for(const it of scored){
+    if(it.s===0 && used>0) continue;               // once we have relevant matter, skip zero-hit chunks
+    if(used+it.p.length>maxChars) continue;
+    out+=it.p+"\n\n"; used+=it.p.length;
+  }
+  return out.trim()||text.slice(0,maxChars);
+}
+function kbBlock(brief){
+  if(!kbText.trim()) return "";
+  const sel=selectSections(kbText,brief||"");
+  return `\nVERIFIED KNOWLEDGE BASE — the user's clinical research document. This is the ONLY permitted source of factual claims:\n"""${sel}"""\nGrounding rule: every stat, ingredient amount, mechanism, or scientific claim in the prompt must trace to this knowledge base. Do NOT invent, round, or generalise beyond it. If a needed fact is absent here, instruct the target model to omit the claim rather than fabricate it.\n`;
+}
+// init KB
+try{document.getElementById("kbUrl").value=localStorage.getItem(KBURL_KEY)||DEFAULT_KB;kbText=localStorage.getItem(KBTXT_KEY)||"";}catch(e){document.getElementById("kbUrl").value=DEFAULT_KB;}
+renderKBState();
+document.getElementById("kbFetch").addEventListener("click",()=>fetchKB(true));
+document.getElementById("kbUrl").addEventListener("change",()=>{try{localStorage.setItem(KBURL_KEY,kbUrlVal());}catch(e){}renderKBState();});
 
 /* ---------- mode switching ---------- */
 let MODE="idea";
@@ -405,6 +488,8 @@ document.getElementById("buildBtn").addEventListener("click",async()=>{
   const s2=document.getElementById("s2");
   const qa=[...document.querySelectorAll('#questions textarea')].map(t=>`Q: ${t.dataset.q}\nA: ${t.value.trim()||"(no answer — make a sensible assumption and flag it)"}`).join("\n\n");
   s2.textContent="Writing your prompt…";
+  await fetchKB(false);
+  const KB=kbBlock(originalDump+"\n"+qa);
 
   let meta;
   if(MODE==="idea"){
@@ -417,7 +502,7 @@ User's original input:
 
 Their answers to your clarifying questions:
 ${qa}
-${memoryBlock()}
+${memoryBlock()}${KB}
 ${GUARDRAILS}
 
 Rules:
@@ -435,7 +520,7 @@ The existing output + purpose:
 
 Their answers to your clarifying questions:
 ${qa}
-${memoryBlock()}
+${memoryBlock()}${KB}
 ${GUARDRAILS}
 
 Do TWO things:
@@ -491,6 +576,8 @@ document.getElementById("refineBtn").addEventListener("click",async()=>{
   if(!builtPrompt){s3.innerHTML='<span class="err">Build a prompt first.</span>';return;}
   const wantLearn=document.getElementById("rememberLearn").checked;
   s3.textContent="Reworking your prompt…";
+  await fetchKB(false);
+  const KB=kbBlock(builtPrompt+"\n"+fb);
   const meta=`You are Prompt Maestro, an expert prompt engineer. You previously produced this copy-ready prompt for ${targetName()}:
 """${builtPrompt}"""
 
@@ -498,7 +585,7 @@ The user ran it and gave this feedback about the result (or added new requiremen
 """${fb}"""
 
 Model dialect to follow: ${DIALECT[document.getElementById("target").value]}
-${memoryBlock()}
+${memoryBlock()}${KB}
 ${GUARDRAILS}
 
 Revise the prompt so the NEXT run fixes this. Keep what worked; change only what the feedback implies. The deliverable is the revised PROMPT, not the final output.
