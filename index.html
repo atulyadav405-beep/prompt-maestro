@@ -33,6 +33,18 @@
   .status{color:var(--muted);font-size:13px;margin-top:10px}
   .err{color:#ff8a8a}
   .hidden{display:none}
+  /* mode tabs */
+  .tabs{display:flex;gap:8px;margin-bottom:18px}
+  .tab{flex:1;text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px 10px;font-size:13.5px;font-weight:600;color:var(--muted);cursor:pointer}
+  .tab.active{border-color:var(--accent);color:var(--text);background:var(--panel2)}
+  .tab .t2{display:block;font-weight:400;font-size:11.5px;color:var(--muted);margin-top:2px}
+  /* memory chip row */
+  .memrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin-top:10px}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12px;color:var(--accent2)}
+  .linklike{color:var(--accent);cursor:pointer;font-size:12.5px}
+  .linklike:hover{text-decoration:underline}
+  .learnitem{font-size:12.5px;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 9px;margin:5px 0;display:flex;justify-content:space-between;gap:8px}
+  .learnitem .del{color:#ff8a8a;cursor:pointer;flex:none}
   /* popup */
   #ov{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
   #ov.show{display:flex}
@@ -46,11 +58,17 @@
 <body>
 <div class="wrap">
   <h1>Prompt Maestro</h1>
-  <p class="sub">Dump a rough idea. It asks a couple of sharp questions, then hands you a polished, copy-ready prompt tuned to your chosen AI model.</p>
+  <p class="sub">Dump a rough idea — or paste an output that fell flat. It asks a couple of sharp questions, then hands you a polished, copy-ready prompt tuned to your chosen AI model. It remembers your voice and learns from your feedback.</p>
+
+  <!-- MODE TABS -->
+  <div class="tabs">
+    <div class="tab active" id="tabIdea" data-mode="idea">💡 Build from an idea<span class="t2">start from scratch</span></div>
+    <div class="tab" id="tabImprove" data-mode="improve">🔧 Improve an existing output<span class="t2">paste what an AI gave you</span></div>
+  </div>
 
   <!-- STEP 1 -->
   <div class="card">
-    <div class="steplabel">Step 1 · Tell it what you want</div>
+    <div class="steplabel">Step 1 · <span id="step1label">Tell it what you want</span></div>
 
     <label>Target model <span class="info" data-info="model">i</span></label>
     <select id="target">
@@ -80,11 +98,34 @@
       </optgroup>
     </select>
 
-    <label>What do you want? <span class="hint">— rough is fine</span> <span class="info" data-info="dump">i</span></label>
-    <textarea id="dump" placeholder="e.g. captions for my electrolyte brand on insta / fix the login bug / a hero image for the landing page…"></textarea>
+    <!-- idea-mode field -->
+    <div id="ideaFields">
+      <label>What do you want? <span class="hint">— rough is fine</span> <span class="info" data-info="dump">i</span></label>
+      <textarea id="dump" placeholder="e.g. captions for my electrolyte brand on insta / fix the login bug / a hero image for the landing page…"></textarea>
+    </div>
+
+    <!-- improve-mode fields -->
+    <div id="improveFields" class="hidden">
+      <label>Paste the output you got <span class="hint">— the one that wasn't good enough</span> <span class="info" data-info="paste">i</span></label>
+      <textarea id="paste" placeholder="paste the caption / copy / image description / code an AI gave you…"></textarea>
+      <label>What was it written for? <span class="info" data-info="purpose">i</span></label>
+      <textarea id="purpose" style="min-height:60px" placeholder="e.g. an Instagram caption to drive trial of our electrolyte during summer / a cold email to gyms…"></textarea>
+    </div>
 
     <label>Anything else worth knowing? <span class="hint">— optional</span> <span class="info" data-info="context">i</span></label>
     <textarea id="ctx" style="min-height:60px" placeholder="audience, brand voice, constraints, where it'll be used, files…"></textarea>
+
+    <!-- MEMORY / brand voice + learnings -->
+    <details id="memBlock">
+      <summary>🧠 Brand voice & learnings <span class="hint">— remembered on this device</span></summary>
+      <label>Brand voice anchor <span class="hint">— paste 1–3 real lines in your voice</span> <span class="info" data-info="voice">i</span></label>
+      <textarea id="voice" style="min-height:70px" placeholder="Paste a couple of lines you've actually written — a caption, a tagline, how you talk. Every prompt will be anchored to this tone."></textarea>
+      <button class="btn ghost sm" id="saveVoice" style="margin-top:10px">Save voice</button>
+      <div class="memrow" id="voiceState"></div>
+      <label style="margin-top:16px">What it has learned from your feedback <span class="info" data-info="learn">i</span></label>
+      <div id="learnList"><div class="hint">Nothing yet — refine a prompt in Step 3 and it'll remember what you wanted.</div></div>
+      <span class="linklike" id="clearLearn" style="margin-top:8px;display:inline-block">Clear all learnings</span>
+    </details>
 
     <details>
       <summary>⚙︎ API settings (needed once — your key, your model)</summary>
@@ -118,11 +159,26 @@
     <div class="steplabel">Step 3 · Your copy-ready prompt</div>
     <div class="codebox" id="result"></div>
     <div class="nudge hidden" id="nudge"></div>
-    <button class="btn sm" id="copyBtn" style="margin-top:14px">Copy prompt</button>
-    <button class="btn ghost sm" id="restartBtn" style="margin-top:14px">Start over</button>
+    <details id="inferredWrap" class="hidden">
+      <summary>🔍 What I think produced your original output</summary>
+      <div class="codebox" id="inferred" style="margin-top:8px"></div>
+    </details>
+    <div style="margin-top:14px">
+      <button class="btn sm" id="copyBtn">Copy prompt</button>
+      <button class="btn ghost sm" id="restartBtn">Start over</button>
+    </div>
+
+    <!-- refinement loop -->
+    <div style="margin-top:20px;border-top:1px solid var(--line);padding-top:16px">
+      <label style="margin-top:0">Result wasn't quite right? <span class="hint">— tell it what to fix</span> <span class="info" data-info="refine">i</span></label>
+      <textarea id="refineInput" style="min-height:60px" placeholder="e.g. too generic, sounded like an ad / make it punchier / it ignored the discount / add a stat about sweat loss…"></textarea>
+      <label style="font-weight:400;font-size:13px"><input type="checkbox" id="rememberLearn" checked style="width:auto;margin-right:6px" />Remember this so future prompts are better</label>
+      <button class="btn sm" id="refineBtn">Refine the prompt →</button>
+      <div class="status" id="s3"></div>
+    </div>
   </div>
 
-  <div class="foot">Runs in your browser. Your key is only sent to the AI provider you choose. Built on the “Anatomy of a Prompt” framework.</div>
+  <div class="foot">Runs in your browser. Your key, voice and learnings stay on this device. Built on the “Anatomy of a Prompt” framework.</div>
 </div>
 
 <!-- info popup -->
@@ -133,15 +189,26 @@
 const INFO={
   model:{t:"Pick the model you'll actually paste into",b:"The prompt is shaped differently per model — Claude likes XML tags, Gemini wants context first, reasoning models prefer no examples, Midjourney wants art-direction + parameters. Choosing correctly is half the quality."},
   dump:{t:"Just describe the outcome you want",b:"Don't worry about structure or wording — that's this tool's job. Say what you want to end up with and who/what it's for. The messier your input, the more the clarifying questions will help."},
+  paste:{t:"Paste the output that underwhelmed you",b:"Drop in the actual caption, copy, image description, or code an AI gave you. The tool reverse-engineers the likely prompt behind it, then writes a much stronger prompt to get a better version."},
+  purpose:{t:"What was this output meant to do?",b:"Tell it the job: the channel, the goal, the audience. This is what lets it judge where the original fell short and aim the new prompt at the real objective."},
   context:{t:"Background the model can't guess",b:"Audience, brand voice, length, tone, must-include / must-avoid, where the output will be used, any source files. Missing context is the #1 reason AI output comes back generic."},
+  voice:{t:"Anchor everything to how you actually sound",b:"Paste a couple of lines you've really written. The tool bakes this in as a voice anchor so prompts produce copy in your tone — not generic AI voice. Saved only on this device."},
+  learn:{t:"It gets better the more you use it",b:"Every time you refine a prompt and keep 'remember this' ticked, the takeaway is stored here and applied to all future prompts on this device. Delete any you don't want anymore."},
+  refine:{t:"Close the loop",b:"Ran the prompt and the output missed? Say what was off or add detail. It revises the prompt — and, if you let it, remembers the lesson for next time."},
   provider:{t:"Which AI does the thinking",b:"This tool calls a model to ask smart questions and write your prompt. Gemini is the most reliable from a plain website. Your key never leaves your browser except to that provider."}
 };
 const ov=document.getElementById("ov");
-document.querySelectorAll(".info").forEach(el=>el.addEventListener("click",()=>{
-  const i=INFO[el.dataset.info]; if(!i)return;
-  document.getElementById("popTitle").textContent=i.t;
-  document.getElementById("popBody").textContent=i.b; ov.classList.add("show");
-}));
+function bindInfo(){
+  document.querySelectorAll(".info").forEach(el=>{
+    if(el._bound)return; el._bound=true;
+    el.addEventListener("click",()=>{
+      const i=INFO[el.dataset.info]; if(!i)return;
+      document.getElementById("popTitle").textContent=i.t;
+      document.getElementById("popBody").textContent=i.b; ov.classList.add("show");
+    });
+  });
+}
+bindInfo();
 document.getElementById("popClose").addEventListener("click",()=>ov.classList.remove("show"));
 ov.addEventListener("click",e=>{if(e.target===ov)ov.classList.remove("show");});
 
@@ -167,8 +234,77 @@ const DIALECT={
 };
 function targetName(){return document.getElementById("target").selectedOptions[0].text;}
 
+/* ---------- shared quality guardrails baked into every build ---------- */
+const GUARDRAILS=`Quality guardrails (always apply):
+- Be specific and concrete. Avoid generic ad tropes, filler superlatives ("game-changing", "revolutionary", "unleash"), and clichés.
+- Make NO unverifiable or fabricated claims — no invented stats, awards, percentages, or specifics the user hasn't supplied.
+- Prefer one sharp insight or angle over a list of generic benefits.`;
+
+/* ---------- memory: brand voice + learnings (per device) ---------- */
+const VOICE_KEY="pm_voice", LEARN_KEY="pm_learnings";
+function getVoice(){try{return localStorage.getItem(VOICE_KEY)||"";}catch(e){return "";}}
+function getLearnings(){try{return JSON.parse(localStorage.getItem(LEARN_KEY)||"[]");}catch(e){return [];}}
+function setLearnings(arr){try{localStorage.setItem(LEARN_KEY,JSON.stringify(arr.slice(-15)));}catch(e){}}
+function addLearning(text){
+  text=(text||"").trim(); if(!text)return;
+  const arr=getLearnings();
+  if(arr.some(x=>x.toLowerCase()===text.toLowerCase()))return; // dedupe
+  arr.push(text); setLearnings(arr); renderLearnings();
+}
+function renderVoiceState(){
+  const v=getVoice(), el=document.getElementById("voiceState");
+  el.innerHTML = v ? '<span class="chip">voice saved ✓</span><span class="linklike" id="clearVoice">clear</span>'
+                   : '<span class="hint">No voice saved yet — prompts will use a neutral tone.</span>';
+  const cv=document.getElementById("clearVoice");
+  if(cv)cv.addEventListener("click",()=>{try{localStorage.removeItem(VOICE_KEY);}catch(e){}document.getElementById("voice").value="";renderVoiceState();});
+}
+function renderLearnings(){
+  const arr=getLearnings(), box=document.getElementById("learnList");
+  if(!arr.length){box.innerHTML='<div class="hint">Nothing yet — refine a prompt in Step 3 and it\'ll remember what you wanted.</div>';return;}
+  box.innerHTML="";
+  arr.forEach((t,i)=>{
+    const d=document.createElement("div");d.className="learnitem";
+    const span=document.createElement("span");span.textContent=t;
+    const x=document.createElement("span");x.className="del";x.textContent="✕";x.title="forget this";
+    x.addEventListener("click",()=>{const a=getLearnings();a.splice(i,1);setLearnings(a);renderLearnings();});
+    d.appendChild(span);d.appendChild(x);box.appendChild(d);
+  });
+}
+function memoryBlock(){
+  const v=getVoice(), arr=getLearnings();
+  let s="";
+  if(v) s+=`\nBrand voice anchor (match this tone and rhythm; do NOT copy it verbatim):\n"""${v}"""\n`;
+  if(arr.length) s+=`\nApply these learnings from the user's past feedback:\n${arr.map(x=>"- "+x).join("\n")}\n`;
+  return s;
+}
+// init memory UI
+document.getElementById("voice").value=getVoice();
+renderVoiceState(); renderLearnings();
+document.getElementById("saveVoice").addEventListener("click",()=>{
+  try{const v=document.getElementById("voice").value.trim(); if(v)localStorage.setItem(VOICE_KEY,v); else localStorage.removeItem(VOICE_KEY);}catch(e){}
+  renderVoiceState();
+  const b=document.getElementById("saveVoice");b.textContent="Saved ✓";setTimeout(()=>b.textContent="Save voice",1300);
+});
+document.getElementById("clearLearn").addEventListener("click",()=>{setLearnings([]);renderLearnings();});
+
+/* ---------- mode switching ---------- */
+let MODE="idea";
+function setMode(m){
+  MODE=m;
+  document.getElementById("tabIdea").classList.toggle("active",m==="idea");
+  document.getElementById("tabImprove").classList.toggle("active",m==="improve");
+  document.getElementById("ideaFields").classList.toggle("hidden",m!=="idea");
+  document.getElementById("improveFields").classList.toggle("hidden",m!=="improve");
+  document.getElementById("step1label").textContent = m==="idea" ? "Tell it what you want" : "Paste the output you want to beat";
+  // reset downstream
+  document.getElementById("step2").classList.add("hidden");
+  document.getElementById("step3").classList.add("hidden");
+}
+document.getElementById("tabIdea").addEventListener("click",()=>setMode("idea"));
+document.getElementById("tabImprove").addEventListener("click",()=>setMode("improve"));
+
 /* ---------- API ---------- */
-const DEFAULTS={gemini:"gemini-2.5-flash",anthropic:"claude-sonnet-4-5",openai:"gpt-5.1-mini"};
+const DEFAULTS={gemini:"gemini-2.5-flash",anthropic:"claude-sonnet-4-6",openai:"gpt-5.1-mini"};
 const provider=document.getElementById("provider"),apiKey=document.getElementById("apiKey"),engine=document.getElementById("engine"),remember=document.getElementById("remember");
 function syncEngine(){engine.placeholder=DEFAULTS[provider.value]||"";}
 function store(){return "pm_key_"+provider.value;}
@@ -202,24 +338,53 @@ function extractJSON(s){
 }
 
 /* ---------- Step 1: get clarifying questions ---------- */
-let originalDump="";
+let originalDump="";   // the brief we carry forward
+let builtPrompt="";    // current prompt (for refinement)
 document.getElementById("askBtn").addEventListener("click",async()=>{
-  const dump=document.getElementById("dump").value.trim();
   const ctx=document.getElementById("ctx").value.trim();
   const s1=document.getElementById("s1");
-  if(!dump){s1.innerHTML='<span class="err">Tell it what you want first.</span>';return;}
-  saveKey(); originalDump=dump+(ctx?("\n\nExtra context: "+ctx):"");
-  s1.textContent="Thinking about what to ask you…";
-  const meta=`You are Prompt Maestro, an expert prompt engineer. A user wants a prompt for ${targetName()}.
+  let askMeta;
+
+  if(MODE==="idea"){
+    const dump=document.getElementById("dump").value.trim();
+    if(!dump){s1.innerHTML='<span class="err">Tell it what you want first.</span>';return;}
+    originalDump=dump+(ctx?("\n\nExtra context: "+ctx):"");
+    askMeta=`You are Prompt Maestro, an expert prompt engineer. A user wants a prompt for ${targetName()}.
 Their rough input:
 """${originalDump}"""
-Ask 1–3 sharp clarifying questions that pin down their real objective and fill the highest-value gaps (what success looks like, audience, key constraints, format). If the input is already rich, ask fewer. Make each question specific and easy to answer.
+
+Ask 1–3 sharp clarifying questions that pin down their real objective AND pull out what will make the output distinctive (not generic). Prioritise questions like:
+- "What's the single most important insight or angle here — the one thing only you can say?"
+- "Paste one line in your real brand/voice so I can match the tone."
+- "What proof or specifics can we cite (a stat, a result, a detail)?"
+- "Which clichés or phrases should we ban?"
+Also cover success criteria, audience and key constraints if not already clear. If the input is already rich, ask fewer. Make each question specific and easy to answer.
 Return ONLY a JSON array of question strings. No prose. Example: ["…","…"]`;
+  } else {
+    const paste=document.getElementById("paste").value.trim();
+    const purpose=document.getElementById("purpose").value.trim();
+    if(!paste){s1.innerHTML='<span class="err">Paste the output you want to improve first.</span>';return;}
+    originalDump=`EXISTING OUTPUT the user got (and was not happy with):\n"""${paste}"""\n\nWhat it was written for: ${purpose||"(not specified — infer it)"}`+(ctx?("\n\nExtra context: "+ctx):"");
+    askMeta=`You are Prompt Maestro, an expert prompt engineer. A user pasted an existing AI output they were NOT happy with, intended for ${targetName()}.
+${originalDump}
+
+Ask 1–3 sharp clarifying questions that reveal why it fell short and what a stronger version needs. Prioritise:
+- "What specifically felt off about this — too generic, wrong tone, missing the point?"
+- "What's the one insight or angle it completely missed?"
+- "Paste one line in your real voice so the rewrite matches your tone."
+- "What proof/specifics should the better version include, and what clichés should it avoid?"
+If clear already, ask fewer. Make each question specific and easy to answer.
+Return ONLY a JSON array of question strings. No prose. Example: ["…","…"]`;
+  }
+
+  saveKey();
+  s1.textContent="Thinking about what to ask you…";
   try{
-    const out=await call(meta);
+    const out=await call(askMeta);
     let qs=extractJSON(out);
     if(!Array.isArray(qs)||!qs.length){qs=["What's the single most important thing this output must achieve?"];}
     renderQuestions(qs.slice(0,3)); s1.textContent="";
+    document.getElementById("step3").classList.add("hidden");
     document.getElementById("step2").classList.remove("hidden");
     document.getElementById("step2").scrollIntoView({behavior:"smooth"});
   }catch(e){ s1.innerHTML='<span class="err">'+e.message+'</span>'; }
@@ -240,7 +405,10 @@ document.getElementById("buildBtn").addEventListener("click",async()=>{
   const s2=document.getElementById("s2");
   const qa=[...document.querySelectorAll('#questions textarea')].map(t=>`Q: ${t.dataset.q}\nA: ${t.value.trim()||"(no answer — make a sensible assumption and flag it)"}`).join("\n\n");
   s2.textContent="Writing your prompt…";
-  const meta=`You are Prompt Maestro, an expert prompt engineer. Build the best possible COPY-READY prompt for ${targetName()}.
+
+  let meta;
+  if(MODE==="idea"){
+    meta=`You are Prompt Maestro, an expert prompt engineer. Build the best possible COPY-READY prompt for ${targetName()}.
 
 Model dialect to follow: ${DIALECT[document.getElementById("target").value]}
 
@@ -249,6 +417,8 @@ User's original input:
 
 Their answers to your clarifying questions:
 ${qa}
+${memoryBlock()}
+${GUARDRAILS}
 
 Rules:
 - Apply the Four Pillars (task, persona, context, format) and outcome-first phrasing.
@@ -256,22 +426,51 @@ Rules:
 - The deliverable is the PROMPT for the user to paste — do NOT answer the task yourself.
 - If their request looks off-track for what they're apparently trying to achieve, still build what they asked, but include a short friendly 'nudge'.
 
-Return STRICT JSON only: {"prompt":"<the copy-ready prompt>","nudge":"<empty string, or 1–2 friendly sentences if their input seemed off-track>"}`;
+Return STRICT JSON only: {"prompt":"<the copy-ready prompt>","nudge":"<empty string, or 1–2 friendly sentences if their input seemed off-track>","inferred":""}`;
+  } else {
+    meta=`You are Prompt Maestro, an expert prompt engineer. The user pasted an existing ${targetName()} output they were unhappy with and wants a markedly better version.
+
+The existing output + purpose:
+"""${originalDump}"""
+
+Their answers to your clarifying questions:
+${qa}
+${memoryBlock()}
+${GUARDRAILS}
+
+Do TWO things:
+1. INFER the prompt that most likely produced the existing (weak) output — a concise reconstruction.
+2. Then write a markedly BETTER copy-ready prompt for ${targetName()} that would produce a much stronger version — fixing whatever made the original generic or off-target.
+
+Model dialect to follow: ${DIALECT[document.getElementById("target").value]}
+- Apply the Four Pillars and outcome-first phrasing.
+- The deliverable is the improved PROMPT for the user to paste — do NOT write the final output yourself.
+
+Return STRICT JSON only: {"prompt":"<the improved copy-ready prompt>","inferred":"<your reconstruction of the original prompt>","nudge":"<empty string, or 1–2 friendly sentences if useful>"}`;
+  }
+
   try{
     const out=await call(meta);
     const j=extractJSON(out);
     const prompt=(j&&j.prompt)?j.prompt:out;
     const nudge=(j&&j.nudge)?j.nudge:"";
+    const inferred=(j&&j.inferred)?j.inferred:"";
+    builtPrompt=prompt;
     document.getElementById("result").textContent=prompt;
     const n=document.getElementById("nudge");
     if(nudge){n.textContent="💡 "+nudge;n.classList.remove("hidden");}else{n.classList.add("hidden");}
+    const iw=document.getElementById("inferredWrap");
+    if(MODE==="improve"&&inferred){document.getElementById("inferred").textContent=inferred;iw.classList.remove("hidden");iw.open=false;}
+    else{iw.classList.add("hidden");}
+    document.getElementById("refineInput").value="";
+    document.getElementById("s3").textContent="";
     s2.textContent="";
     document.getElementById("step3").classList.remove("hidden");
     document.getElementById("step3").scrollIntoView({behavior:"smooth"});
   }catch(e){ s2.innerHTML='<span class="err">'+e.message+'</span>'; }
 });
 
-/* ---------- Step 3 ---------- */
+/* ---------- Step 3: copy / restart ---------- */
 document.getElementById("copyBtn").addEventListener("click",()=>{
   navigator.clipboard.writeText(document.getElementById("result").textContent).then(()=>{
     const b=document.getElementById("copyBtn");b.textContent="Copied ✓";setTimeout(()=>b.textContent="Copy prompt",1300);
@@ -279,8 +478,44 @@ document.getElementById("copyBtn").addEventListener("click",()=>{
 });
 document.getElementById("restartBtn").addEventListener("click",()=>{
   document.getElementById("dump").value="";document.getElementById("ctx").value="";
+  document.getElementById("paste").value="";document.getElementById("purpose").value="";
   document.getElementById("step2").classList.add("hidden");document.getElementById("step3").classList.add("hidden");
   window.scrollTo({top:0,behavior:"smooth"});
+});
+
+/* ---------- Step 3: refine loop ---------- */
+document.getElementById("refineBtn").addEventListener("click",async()=>{
+  const s3=document.getElementById("s3");
+  const fb=document.getElementById("refineInput").value.trim();
+  if(!fb){s3.innerHTML='<span class="err">Tell it what to change first.</span>';return;}
+  if(!builtPrompt){s3.innerHTML='<span class="err">Build a prompt first.</span>';return;}
+  const wantLearn=document.getElementById("rememberLearn").checked;
+  s3.textContent="Reworking your prompt…";
+  const meta=`You are Prompt Maestro, an expert prompt engineer. You previously produced this copy-ready prompt for ${targetName()}:
+"""${builtPrompt}"""
+
+The user ran it and gave this feedback about the result (or added new requirements):
+"""${fb}"""
+
+Model dialect to follow: ${DIALECT[document.getElementById("target").value]}
+${memoryBlock()}
+${GUARDRAILS}
+
+Revise the prompt so the NEXT run fixes this. Keep what worked; change only what the feedback implies. The deliverable is the revised PROMPT, not the final output.
+Also extract ONE short, reusable learning (a general preference, not a one-off) phrased as an instruction for future prompts — or "" if the feedback was purely one-off.
+
+Return STRICT JSON only: {"prompt":"<the revised copy-ready prompt>","learning":"<one short reusable instruction, or empty string>","nudge":""}`;
+  try{
+    const out=await call(meta);
+    const j=extractJSON(out);
+    const prompt=(j&&j.prompt)?j.prompt:out;
+    builtPrompt=prompt;
+    document.getElementById("result").textContent=prompt;
+    if(wantLearn&&j&&j.learning){addLearning(j.learning);}
+    document.getElementById("refineInput").value="";
+    s3.innerHTML='<span style="color:var(--accent2)">Updated ✓'+(wantLearn&&j&&j.learning?" — and remembered for next time.":"")+'</span>';
+    document.getElementById("result").scrollIntoView({behavior:"smooth",block:"center"});
+  }catch(e){ s3.innerHTML='<span class="err">'+e.message+'</span>'; }
 });
 </script>
 </body>
